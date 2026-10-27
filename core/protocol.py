@@ -6,7 +6,7 @@ import json
 import re
 import time
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -60,6 +60,7 @@ class TurnGrant(BaseModel):
     topic: str = Field(..., description="The current roundtable debate topic")
     history: List[dict] = Field(default_factory=list, description="Transcript of previous turns in the debate")
     available_agents: List[str] = Field(default_factory=list, description="List of eligible peer team names excluding self")
+    peers: Dict[str, str] = Field(default_factory=dict, description="Public blurb for each eligible peer, keyed by name")
     round_number: int = Field(default=1, description="Current round index")
     time_limit_sec: int = Field(default=30, description="Recommended speaking time ceiling")
 

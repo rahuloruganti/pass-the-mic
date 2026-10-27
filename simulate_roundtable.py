@@ -139,6 +139,7 @@ async def run_simulation(
             topic=topic_text,
             history=history,
             available_agents=available_peers,
+            peers={n: agents[n].blurb for n in available_peers},
         )
 
         # Print Spoken Box

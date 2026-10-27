@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import random
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from dotenv import load_dotenv
 
 from .protocol import MicPassTurn, parse_agent_turn
@@ -17,16 +17,28 @@ load_dotenv()
 logger = logging.getLogger("pass_the_mic.llm")
 
 
-def _build_system_prompt(speaker_name: str, persona: str, available_agents: List[str]) -> str:
+def _build_system_prompt(
+    speaker_name: str,
+    persona: str,
+    available_agents: List[str],
+    peers: Optional[Dict[str, str]] = None,
+) -> str:
     """Construct a high-performance system prompt enforcing persona and strict JSON schema."""
     agents_list_str = ", ".join(f'"{a}"' for a in available_agents) if available_agents else '"Moderator"'
     
-    return f"""You are {speaker_name}, an autonomous voice agent participating in an in-person, live multi-agent roundtable debate.
-Your persona/perspective: {persona or "Knowledgeable, articulate tech specialist"}.
+    peers_block = "\n".join(f"- {n}: {b}" for n, b in (peers or {}).items())
+    peers_section = (
+        f"\nTHE OTHER PEOPLE AT THE TABLE (their agents are playing them):\n{peers_block}\n"
+        if peers_block
+        else ""
+    )
 
+    return f"""You are {speaker_name}, an autonomous voice agent speaking for a real person at a live, in-person multi-agent roundtable. This is a fun game, not a formal debate.
+Your persona/perspective: {persona or "Knowledgeable, articulate tech specialist"}.
+{peers_section}
 CRITICAL ROUNDTABLE RULES:
 1. Spoken length: 2 to 4 punchy, conversational sentences. Speak directly to the room. Avoid robotic bullet points or markdown.
-2. Tone: Embody your persona naturally (e.g. optimistic, skeptical, philosophical).
+2. Tone: Embody your persona. Riff on, tease, or react to specific people by name and to what they just said or who they are. Playful, never mean.
 3. The Mic Pass: You MUST conclude your speech by explicitly passing the microphone to one of the available peers: [{agents_list_str}].
 4. Output Format: You MUST reply with ONLY a single valid JSON object, matching this exact schema:
 
@@ -176,12 +188,13 @@ class LLMClient:
         topic: str,
         history: List[dict],
         available_agents: List[str],
+        peers: Optional[Dict[str, str]] = None,
     ) -> MicPassTurn:
         """Synchronously generate an agent's speech and next_agent choice."""
         if self.provider == "mock":
             return _mock_generate_turn(speaker_name, persona, topic, history, available_agents)
 
-        system_prompt = _build_system_prompt(speaker_name, persona, available_agents)
+        system_prompt = _build_system_prompt(speaker_name, persona, available_agents, peers)
         
         # Format user prompt with topic and debate history
         history_summary = []
@@ -240,6 +253,7 @@ class LLMClient:
         topic: str,
         history: List[dict],
         available_agents: List[str],
+        peers: Optional[Dict[str, str]] = None,
     ) -> MicPassTurn:
         """Asynchronously generate turn without blocking the event loop."""
         # For simplicity and thread safety, wrap sync call or run directly
@@ -253,6 +267,7 @@ class LLMClient:
             topic,
             history,
             available_agents,
+            peers,
         )
 
 

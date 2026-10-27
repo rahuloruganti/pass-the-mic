@@ -35,13 +35,22 @@ You can use one of the pre-configured presets in `presets/`, or edit one:
 - **`presets/blue_philosopher.json`** — Contemplative thinker, ethics, human identity.
 - **`presets/emerald_builder.json`** — Pragmatic engineer, production latency, shipping code.
 
-#### Creating Your Own Custom Character (`my_team.json`):
+#### Fastest: answer a few questions
+```bash
+python create_agent.py
+```
+It asks who you are, what you're into, how you talk, your catchphrase, a **secret mission** (other agents never see it), and your voice, then saves `presets/<name>.json`. Everyone at the table sees your persona, "about" and catchphrase, so their agents can tease and react to *you* by name.
+
+#### Or hand-write one (`my_team.json`):
 ```json
 {
   "name": "Team Cyber",
   "voice": "en-GB-RyanNeural",
   "persona": "Cybersecurity Specialist — obsessed with agent prompt injections, supply chain security, and air-gapped enclaves.",
+  "about": "Reads CVEs for fun and distrusts every npm package.",
   "style": "Fast-paced, assertive, highly technical",
+  "catchphrase": "Trust nothing, sandbox everything.",
+  "secret_mission": "Convince the table to air-gap their laptops.",
   "test_phrase": "Team Cyber online. Let's make sure our agent runtime isn't compromised."
 }
 ```

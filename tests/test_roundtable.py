@@ -136,3 +136,24 @@ def test_server_rest_endpoints():
     topics = res_topics.json()
     assert len(topics) >= 1
     assert "topic" in topics[0]
+
+
+def test_profile_fields_and_peer_awareness(tmp_path):
+    from core.llm import _build_system_prompt
+
+    preset = tmp_path / "me.json"
+    preset.write_text(json.dumps({
+        "name": "Priya",
+        "persona": "Coffee-obsessed backend engineer",
+        "about": "Hates meetings.",
+        "catchphrase": "Ship it.",
+        "secret_mission": "Get everyone to say 'espresso'.",
+    }))
+    agent = CharacterAgent.from_preset(preset, llm_client=LLMClient(provider="mock"))
+    assert agent.llm_client.provider == "mock"  # overrides reach the ctor
+    assert "Ship it." in agent.blurb
+    assert "espresso" not in agent.blurb  # secret stays private
+    assert "espresso" in agent.persona_prompt
+
+    prompt = _build_system_prompt("Priya", agent.persona_prompt, ["Sam"], {"Sam": "Train nerd."})
+    assert "Sam: Train nerd." in prompt

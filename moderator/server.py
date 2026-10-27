@@ -216,6 +216,7 @@ class RoundtableCoordinator:
                 topic=topic_str,
                 history=self.history,
                 available_agents=eligible_peers,
+                peers={n: self.agent_metadata[n]["persona"] for n in eligible_peers if n in self.agent_metadata},
                 round_number=self.current_round,
                 time_limit_sec=45,
             )

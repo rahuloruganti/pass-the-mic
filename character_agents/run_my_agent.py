@@ -91,7 +91,7 @@ async def run_agent_loop(
                     "type": MessageType.REGISTER.value,
                     "name": agent.name,
                     "voice": agent.voice,
-                    "persona": agent.persona,
+                    "persona": agent.blurb,
                 }
                 await ws.send(json.dumps(reg_payload))
 
@@ -129,6 +129,7 @@ async def run_agent_loop(
                             topic=topic,
                             history=history,
                             available_agents=available_peers,
+                            peers=msg.get("peers", {}),
                         )
 
                         turn_box = (

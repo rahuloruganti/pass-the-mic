@@ -1,244 +1,151 @@
-# 🎙️ pass-the-mic: Multi-Agent Voice Roundtable
+# pass-the-mic: multi-agent voice roundtable
 
-A clean, production-ready Python repository for running live, in-person multi-agent voice roundtable debates across laptops on a local Wi-Fi network.
+A Python project for running an in-person, multi-agent voice debate across laptops on a local Wi-Fi network. One laptop runs the moderator and a WebSocket coordinator. Each participant runs a character agent on their own machine. When an agent gets the mic, it writes a short reply, speaks it through its own speakers with Edge TTS, and names the next speaker.
+
+This repository is a fork of [Chandukasireddy/pass-the-mic](https://github.com/Chandukasireddy/pass-the-mic). The original project and its design are the upstream author's work.
+
+## Upstream and my contributions
+
+- Upstream: [Chandukasireddy/pass-the-mic](https://github.com/Chandukasireddy/pass-the-mic)
+- My work in this fork: [commit 2c5fa17](https://github.com/rahuloruganti/pass-the-mic/commit/2c5fa1767db7a323770c07beeddd4c2b85c0f118), whose subject is "add create_agent script and guide, rework agent builder, LLM and protocol, update tests".
+
+That commit covers:
+
+- `character_agents/create_agent.py` (new): an interactive preset builder that asks for a name, persona, interests, speaking style, catchphrase, private mission, and voice, then writes `character_agents/presets/<name>.json`.
+- `character_agents/agent_builder.py`: three new preset fields (`about`, `catchphrase`, `secret_mission`), a public `blurb` that excludes the secret mission, a private `persona_prompt` that includes it, a `peers` argument threaded through turn generation, and a `from_preset` that merges preset data with constructor overrides (`cls(**{**data, **overrides})`) so any field, including `llm_client`, can be overridden.
+- `core/llm.py`: the system prompt now lists the other participants by name with their public blurbs and asks the agent to react to them; the `peers` map is passed through both the sync and async turn-generation paths.
+- `core/protocol.py`: a `peers` field on the `TurnGrant` model.
+- `moderator/server.py` and `simulate_roundtable.py`: one-line changes that attach each eligible peer's public blurb to the turn grant.
+- `guide.md` (new): a step-by-step setup guide for a host and two participant laptops.
+- `tests/test_roundtable.py`: one new test, `test_profile_fields_and_peer_awareness`, covering override merging, blurb privacy, and the peer block in the system prompt.
+- `character_agents/README.md`: documents the question-driven preset flow and the new profile fields.
+
+The rest of the project is upstream work. The coordinator, the `CharacterAgent` base class, the tolerant parser, provider selection, and the pre-existing tests were already there; this commit edits those files but does not introduce those components.
+
+The fork keeps the upstream architecture: a FastAPI coordinator, a moderator voice agent, and per-laptop character agents.
 
 ```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                        PASS-THE-MIC TOPOLOGY                           │
-│                                                                        │
-│   ┌─────────────────────┐              ┌───────────────────────┐       │
-│   │   HOST MODERATOR    │              │     TEAM ORANGE       │       │
-│   │   ("Team Black")    │              │   (Tech Optimist)     │       │
-│   │   Coordinator + WS  │              │  Edge-TTS + Speakers  │       │
-│   └──────────┬──────────┘              └───────────▲───────────┘       │
-│              │                                     │                   │
-│              │ 1. Introduces Topic                 │                   │
-│              │    & Calls Team Orange              │ 2. Speaks aloud & │
-│              ▼                                     │    Passes to Red  │
-│   ┌────────────────────────────────────────────────┼───────────────┐   │
-│   │        Local Wi-Fi WebSocket Coordinator Server (FastAPI)      │   │
-│   └────────────────────────────────────────────────┬───────────────┘   │
-│                                                    │                   │
-│                               3. Activates Red ────┘                   │
-│                                                    ▼                   │
-│                                        ┌───────────────────────┐       │
-│                                        │       TEAM RED        │       │
-│                                        │  (Pragmatic Skeptic)  │       │
-│                                        │  Edge-TTS + Speakers  │       │
-│                                        └───────────────────────┘       │
-└────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────┐                 ┌──────────────────────┐
+│   HOST / MODERATOR   │                 │      TEAM ORANGE     │
+│  coordinator + WS    │◄───────────────►│  LLM + Edge TTS      │
+└──────────┬───────────┘                 └──────────┬───────────┘
+           │                                        │
+           │  WebSocket over local Wi-Fi            │ speaks, then
+           │  turn grants and mic passes            │ passes the mic
+           ▼                                        ▼
+┌───────────────────────────────────────────────────────────────┐
+│                  FastAPI coordinator on port 8000             │
+└───────────────────────────────────────────────────────────────┘
 ```
 
----
+## Repository layout
 
-## 🌟 1. Project Vision & Meetup Dynamics
+- `core/`: shared LLM client, Edge TTS wrapper, pygame playback, and the turn protocol.
+- `moderator/`: FastAPI and WebSocket server, moderator agent, terminal dashboard, and topics.
+- `character_agents/`: attendee agent class, guided preset creator, runner, local voice test, and example presets.
+- `simulate_roundtable.py`: one-laptop simulation with a moderator and two or three characters.
+- `tests/`: unit and integration tests.
+- `guide.md`: host and participant walkthrough, including Windows commands and troubleshooting.
 
-**Pass-The-Mic** turns any room of developers into a high-energy, autonomous voice roundtable:
+## Quickstart
 
-1. **The Host (Repository Owner)** runs the **Moderator Agent** ("Team Black"). The host's machine hosts the central coordination server, selects the debate topic, introduces the rules in an authoritative broadcast voice, manages turns, monitors latency, and keeps time.
-2. **Meetup Attendees** clone this repository and go straight to the [`character_agents/`](file:///k:/Tech/Projects/pass-the-mic/character_agents) folder. This is their modular workshop template to craft a personalized voice agent (e.g., "Team Orange", "Team Red", "Team Blue"), pick a persona, choose a neural voice, test it locally on their laptop speakers, and connect to the host.
-3. **The Turn-Taking Mechanic:**
-   - **Moderator** introduces the topic: *"Team Orange, what is your stance on this?"*
-   - **Team Orange's** laptop triggers its LLM, speaks out loud via its own speakers, and ends with: *"I believe open-source will accelerate, but I'm passing the mic to Team Red to hear their perspective on safety."*
-   - The Moderator's coordinator server detects the mic pass and immediately activates **Team Red's** laptop.
-   - The cycle continues until the round limit is reached, whereupon the Moderator synthesizes the debate points and wraps up the session.
+Install dependencies once per machine:
 
----
-
-## 🏗️ 2. Repository Architecture
-
-```
-pass-the-mic/
-├── README.md                      # Overview of the project & meetup guide
-├── requirements.txt              # Shared lightweight dependencies (FastAPI, uvicorn, edge-tts, pygame, groq)
-├── .env.example                  # GROQ_API_KEY / OPENAI_API_KEY
-├── simulate_roundtable.py        # [HOST TEST] Runs 1 Moderator + 2 Sample Characters on ONE laptop
-│
-├── core/                         # Shared utilities used by both Host and Characters
-│   ├── __init__.py
-│   ├── llm.py                    # Fast LLM client (Groq Llama-3 free tier, with OpenAI & Mock fallback)
-│   ├── tts.py                    # Voice generator (edge-tts by default — 100% free, no API key needed)
-│   ├── audio.py                  # Clean audio playback using pygame (blocking & async)
-│   └── protocol.py               # JSON schema for mic-passing (speaker, text, next_agent)
-│
-├── moderator/                    # [HOST CORE] Main engine run by the meetup host
-│   ├── __init__.py
-│   ├── server.py                 # FastAPI + WebSocket server coordinating turns over local Wi-Fi
-│   ├── moderator_agent.py        # The Host's Voice Agent (introduces topic, summarizes, intervenes)
-│   ├── dashboard.py              # Pretty terminal UI (using rich) showing connected teams and active speaker
-│   └── topics.json               # Curated list of fun tech/AI debate topics
-│
-└── character_agents/             # [ATTENDEE WORKSHOP FOLDER] Clean template for participants
-    ├── README.md                 # "How to build your Character Agent in 3 minutes"
-    ├── run_my_agent.py           # The script attendees run to connect to the host's server
-    ├── test_local_voice.py       # Standalone script: attendee tests voice & audio without server
-    ├── agent_builder.py          # Clean participant agent class
-    └── presets/                  # Pre-configured example characters for attendees to inspect
-        ├── orange_optimist.json  # Tech Optimist persona & voice config
-        ├── red_skeptic.json      # Pragmatic Skeptic persona & voice config
-        ├── blue_philosopher.json # Deep Thinker persona & voice config
-        └── emerald_builder.json  # Pragmatic Builder persona & voice config
-```
-
----
-
-## ⚡ 3. Core Technical Specifications
-
-### A. Zero-Cost, Reliable Audio Pipeline (`core/tts.py` & `core/audio.py`)
-- Powered by `edge-tts` (Microsoft Edge Neural Voices). It requires **no API keys, no subscriptions, has zero rate limits**, and sounds remarkably human.
-- Curated voice dictionary:
-  - **Moderator:** `en-US-GuyNeural` (Authoritative, broadcast tone)
-  - **Team Orange:** `en-US-AriaNeural` (Energetic, upbeat)
-  - **Team Red:** `en-GB-RyanNeural` (British, analytical, sharp)
-  - **Team Blue:** `en-AU-NatashaNeural` (Australian, relaxed, articulate)
-  - **Team Emerald:** `en-US-ChristopherNeural` (Confident, direct)
-- **Blocking Playback:** Speech playback blocks execution while an agent is speaking so laptops do not talk over each other in the room.
-
-### B. The Structured Turn-Taking Protocol (`core/protocol.py`)
-To prevent hallucinations and guarantee the mic is passed cleanly, every agent returns valid JSON:
-```json
-{
-  "speaker": "Team Orange",
-  "spoken_text": "I believe open-source agents are moving faster than closed labs. Passing the mic to Team Red — how do you see the safety trade-off?",
-  "next_agent": "Team Red"
-}
-```
-If an LLM hallucinates or returns malformed text, `core/protocol.py` includes robust regex repair and fallback selection to guarantee uninterrupted roundtable flow.
-
-### C. Fast LLM Pipeline (`core/llm.py`)
-- **Primary:** [Groq Llama-3 free tier](https://console.groq.com/keys) (`llama-3.3-70b-versatile` or `llama-3.1-8b-instant`) for sub-second turn latency.
-- **Secondary Fallback:** OpenAI (`gpt-4o-mini`).
-- **Zero-Key Simulation Mode:** If no API key is provided, the engine automatically activates an intelligent contextual simulation generator matching each persona, ensuring instant testing out of the box with zero setup hurdles.
-
----
-
-## 🚀 4. Quickstart Guide
-
-### Option A: Test Solo on 1 Laptop (No Server Required!)
-Simulate the entire multi-agent voice roundtable on a single machine:
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/pass-the-mic.git
+git clone https://github.com/rahuloruganti/pass-the-mic.git
 cd pass-the-mic
-
-# Install dependencies
 pip install -r requirements.txt
+```
 
-# Run the simulation (Speaks out loud in 3 distinct voices!)
-python simulate_roundtable.py --rounds 3
+### Simulate on one laptop
 
-# (Optional) Run fast muted text-only test:
+```bash
+python simulate_roundtable.py --provider mock --rounds 3
 python simulate_roundtable.py --mute --rounds 2
 ```
 
----
+`--provider mock` uses ready-made replies, so the first run needs no API key and makes no provider call. Without that flag, `core/llm.py` picks up a Groq or OpenAI key from `.env` if one is set and sends real requests to that provider. `--mute` skips playback for a faster text-only check, and `--three-teams` adds a third character.
 
-### Option B: For the Meetup Host (Running the Room)
+### Host a room
 
-1. **Start the Coordinator Server:**
-   ```bash
-   python -m moderator.server
-   ```
-2. The terminal will display your **Local LAN IP** and WebSocket address:
-   ```text
-   Host LAN IP: 192.168.1.42:8000
-   WebSocket URI: ws://192.168.1.42:8000/ws
-   ```
-3. Announce your IP to the room. As attendees connect, they will appear live on your dashboard.
-4. **Trigger the debate** by calling the `/start` endpoint from your browser or curl:
-   ```bash
-   curl -X POST http://localhost:8000/start -H "Content-Type: application/json" -d "{\"max_turns\": 6}"
-   ```
-   Or visit `http://localhost:8000` to inspect connected teams.
+```bash
+python -m moderator.server
+```
 
----
+The server prints a LAN address such as `192.168.1.42:8000` and serves a status page at `http://localhost:8000`. Start a debate with:
 
-### Option C: For Meetup Attendees (Building Your Agent)
+```bash
+curl -X POST http://localhost:8000/start -H "Content-Type: application/json" -d '{"max_turns": 6}'
+```
 
-1. Navigate to the [`character_agents/`](file:///k:/Tech/Projects/pass-the-mic/character_agents) directory:
-   ```bash
-   cd character_agents
-   ```
-2. **Test your voice locally** on your laptop speakers (no server required!):
-   ```bash
-   python test_local_voice.py --preset presets/orange_optimist.json
-   ```
-3. **(Optional) Configure your Groq free-tier API key** in `.env`:
-   ```env
-   GROQ_API_KEY=gsk_your_key_here
-   ```
-4. **Connect to the host** over local Wi-Fi:
-   ```bash
-   python run_my_agent.py --preset presets/orange_optimist.json --host 192.168.1.42
-   ```
+The start request also accepts `topic_id` and `first_speaker`. Topics are listed at `/topics` and stored in `moderator/topics.json`.
 
----
+### Join as a participant
 
-## 🎭 5. Curated Voice Catalog
+```bash
+cd character_agents
+python create_agent.py
+python test_local_voice.py --preset presets/orange_optimist.json
+python run_my_agent.py --preset presets/orange_optimist.json --host 192.168.1.42
+```
 
-| Team / Alias | Voice ID | Accent & Gender | Tone Description |
-| :--- | :--- | :--- | :--- |
-| **Moderator** | `en-US-GuyNeural` | US English (Male) | Authoritative, clear broadcast tone |
-| **Team Orange** | `en-US-AriaNeural` | US English (Female) | Energetic, upbeat, dynamic |
-| **Team Red** | `en-GB-RyanNeural` | British English (Male) | Analytical, crisp, sharp, skeptical |
-| **Team Blue** | `en-AU-NatashaNeural` | Australian English (Female) | Contemplative, relaxed, articulate |
-| **Team Emerald** | `en-US-ChristopherNeural` | US English (Male) | Confident, direct, technical |
-| **Team Purple** | `en-GB-SoniaNeural` | British English (Female) | Expressive, philosophical |
-| **Team Amber** | `en-IN-NeerjaNeural` | Indian English (Female) | Warm, engaging, articulate |
-| **Team Silver** | `en-US-JennyNeural` | US English (Female) | Natural, conversational |
+`create_agent.py` is optional; the four presets in `character_agents/presets/` work as examples. Participants should use distinct names and agree on the same project version as the host. See [`character_agents/README.md`](character_agents/README.md) and the full [`guide.md`](guide.md) for setup and troubleshooting.
 
----
+## Voice and audio
 
-## 📡 6. Protocol Specification
+`core/tts.py` uses Microsoft Edge neural voices through `edge-tts`. It needs no API key or subscription, but it does need internet access: synthesis calls a Microsoft endpoint, so availability and latency depend on that service and the local network. Audio is written to a temporary MP3 and played with pygame. Playback can block so that one laptop does not talk over another.
 
-All communication between the Host and Attendees occurs via WebSocket JSON payloads:
+| Team | Voice | Accent |
+| :--- | :--- | :--- |
+| Moderator | `en-US-GuyNeural` | US English |
+| Team Orange | `en-US-AriaNeural` | US English |
+| Team Red | `en-GB-RyanNeural` | British English |
+| Team Blue | `en-AU-NatashaNeural` | Australian English |
+| Team Emerald | `en-US-ChristopherNeural` | US English |
+| Team Purple | `en-GB-SoniaNeural` | British English |
+| Team Amber | `en-IN-NeerjaNeural` | Indian English |
+| Team Silver | `en-US-JennyNeural` | US English |
+| Team Onyx | `en-CA-LiamNeural` | Canadian English |
 
-### Registration (`Attendee -> Host`)
+A team name containing a color can override a preset's voice choice. Use a personal name if you want to keep the selected voice.
+
+## LLM providers
+
+`core/llm.py` chooses a provider in this order:
+
+1. Groq, when a usable `GROQ_API_KEY` is set. The default model is `llama-3.3-70b-versatile`.
+2. OpenAI, when a usable `OPENAI_API_KEY` is set and Groq is not configured. The default model is `gpt-4o-mini`.
+3. Mock mode, when neither usable key is present.
+
+Mock mode returns canned, topic-aware replies so the room can test turn-taking without an AI key. It is not a live model. With a real provider, latency depends on the provider, model, and network; the project does not claim a response-time target. Copy `.env.example` to `.env` and add your own key. Each participant uses their own key.
+
+## Turn protocol
+
+Every agent returns one JSON object:
+
 ```json
 {
-  "type": "register",
-  "name": "Team Orange",
-  "voice": "en-US-AriaNeural",
-  "persona": "Tech Optimist"
+  "speaker": "Team Orange",
+  "spoken_text": "Open weights are moving quickly. Passing the mic to Team Red to hear the safety case.",
+  "next_agent": "Team Red"
 }
 ```
 
-### Turn Grant (`Host -> Attendee`)
-```json
-{
-  "type": "your_turn",
-  "topic": "Will open weights outpace closed frontier labs by 2027?",
-  "history": [
-    {"speaker": "Moderator", "spoken_text": "..."}
-  ],
-  "available_agents": ["Team Red", "Team Blue"],
-  "round_number": 1,
-  "time_limit_sec": 45
-}
+The host sends a `your_turn` message containing the topic, recent history, eligible peers, round number, and a suggested time limit. The attendee replies with `turn_complete` and the turn object. `core/protocol.py` extracts JSON from prose or fenced blocks, retries after simple repairs, fills missing fields, and replaces an invalid or self-directed `next_agent` with an eligible peer. This keeps the round moving, though it cannot make a nonsensical model reply meaningful.
+
+## Resilience and limits
+
+- If a turn does not arrive within 45 seconds, the coordinator logs a timeout and has the moderator intervene before passing the mic on.
+- If no participants remain connected, the roundtable stops.
+- Self-passes are redirected to another connected agent.
+- There is no login or transport encryption. Use a trusted local network and do not expose port 8000 to the internet.
+- Multi-laptop operation, provider calls, and audio playback are not exercised by the test suite. `guide.md` states that these were not tested when it was written.
+- The fork has no `LICENSE` file. Check the upstream repository's licensing before reuse.
+
+## Tests
+
+```bash
+pytest
 ```
 
-### Turn Submission (`Attendee -> Host`)
-```json
-{
-  "type": "turn_complete",
-  "turn": {
-    "speaker": "Team Orange",
-    "spoken_text": "Open source is moving at unprecedented speed. Passing the mic to Team Red — what is your take on compute bottlenecks?",
-    "next_agent": "Team Red"
-  }
-}
-```
-
----
-
-## 🛡️ 7. Edge Cases & Resilience
-
-- **Self-Passing Prevention:** If an agent attempts to pass the mic to itself, the protocol parser automatically catches the error and redirects to an eligible peer.
-- **Disconnected Agent Recovery:** If an agent drops Wi-Fi or closes their laptop during their turn, the Host Moderator steps in with an intervention voice alert and passes the mic to another active participant.
-- **Cross-Platform Audio:** Safe mixer unload handling guarantees zero file-lock errors on Windows while streaming audio.
-
----
-
-## 📜 License
-
-MIT License. Crafted for multi-agent voice AI meetups and hackathons.
+The tests use FastAPI's `TestClient` and the mock provider. They cover protocol serialization, parser recovery, voice mapping, presets, profile privacy, mock turn generation, and the REST endpoints. They do not start a real server, call an LLM, or play audio.
